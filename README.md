@@ -40,7 +40,3 @@ Supported Platforms:
 
 iOS Specific Details:
 - iOS 10 requires a description of how an app will use location data access (NSLocationWhenInUseUsageDescription in the Plist). The plugin automatically sets this in the project settings for iOS (Project Settings -> iOS -> AdditionalPlistData). New values for the description will be kept and not overwritten by the plugin.
-
-## Support
-
-For support with the plugin you can email me at contact@stevenjt.com
