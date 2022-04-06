@@ -1,0 +1,14 @@
+Binaries
+Intermediate
+Saved
+
+.vs
+*.sln
+*.opendb
+*.sdf
+
+*~
+.#*
+*#*
+
+*.zip

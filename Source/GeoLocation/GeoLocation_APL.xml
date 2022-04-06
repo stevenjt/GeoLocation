@@ -1,0 +1,528 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--GeoLocation plugin additions-->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- init section is always evaluated once per architecture -->
+    <init>
+        <log text="GeoLocation init"/>
+    </init>
+
+    <!-- optional updates applied to AndroidManifest.xml -->
+    <androidManifestUpdates>
+      <addPermission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+      <insert>
+        <uses-feature android:name="android.hardware.location.gps" />
+      </insert>
+    </androidManifestUpdates>
+
+    <!-- optional additions to AARImports -->
+    <AARImports>
+      <setStringFromProperty result="AndroidGooglePlayServicesVersion" ini="Engine" section="/Script/GeoLocation.GeoLocationSettings" property="AndroidGooglePlayServicesVersion" />
+      <insertValue value="com.google.android.gms,play-services-location,$S(AndroidGooglePlayServicesVersion)" />
+      <insertNewline />
+    </AARImports>
+
+    <!-- optional additions to proguard
+    <proguardAdditions>
+    </proguardAdditions>
+    -->
+    
+    <!-- optional files or directories to copy to Intermediate/Android/APK
+    <resourceCopies>
+    </resourceCopies>
+    -->
+
+    <!-- optional additions to the GameActivity imports in GameActivity.java -->
+    <gameActivityImportAdditions>
+      <insert>
+        import android.location.Location;
+        import android.hardware.GeomagneticField;
+        import android.view.OrientationEventListener;
+        import com.google.android.gms.location.LocationRequest;
+        import com.google.android.gms.location.LocationResult;
+        import com.google.android.gms.location.LocationCallback;
+        import com.google.android.gms.location.LocationServices;
+        import com.google.android.gms.location.FusedLocationProviderClient;
+      </insert>
+    </gameActivityImportAdditions>
+
+    <!-- optional additions to the GameActivity class in GameActivity.java -->
+    <gameActivityClassAdditions>
+      <insert>
+        /* Unreal Plugin Location Update function */
+        private static native void LocationUpdate(double latitude, double longitude, double elevation, double horizontalAccuracy, double verticalAccuracy, double bearing, double speed, long time);
+
+        /* Unreal Plugin Location Error function */
+        private static native void LocationError();
+
+        /* Unreal Plugin Location Update function */
+        private static native void HeadingUpdate(double heading, boolean calibrated);
+
+        /* Google API Client for LocationServices access */
+        private GoogleApiClient locationGoogleApiClient;
+
+        /* Fused Location Provider Client */
+        private FusedLocationProviderClient fusedLocationClient;
+
+        /* Boolean for Geo Location running */
+        private boolean locationListenerRunning = false;
+
+        /* Boolean for Heading running */
+        private boolean headingListenerRunning = false;
+
+        /* Boolean for single heading running */
+        private boolean singleHeadingUpdate = false;
+
+        /* Interval Time for the Geo Location Listener */
+        private long locationListenerIntervalTime;
+
+        /* Fastest Interval Time for the Geo Location Listener */
+        private long locationListenerFastestIntervalTime;
+
+        /* Priority for the Geo Location Listener */
+        private int locationListenerPriority;
+
+        /* Minimum Distance for the Geo Location Listener */
+        private float locationListenerMinimumDistance;
+
+        /* Heading Delay */
+        private int headingDelay;
+
+        /* Sensor Manager used to get heading */
+        private SensorManager headingSensorManager;
+
+        /* Heading Listener */
+        private PluginHeadingListener headingListener = new PluginHeadingListener();
+
+        /* Smoothing Factor */
+        private float smoothingFactor = 0.9f;
+
+        /* Orientation Listener */
+        private OrientationEventListener orientationListener;
+
+        /* Device Orientation */
+        private int deviceOrientation = -1;
+
+        /* Geo Location Location Callback */
+        private LocationCallback locationCallback = new LocationCallback()
+        {
+            /**
+            * On Location Result event
+            */
+            @Override
+            public void onLocationResult(LocationResult locationResult)
+            {
+                if (locationResult.getLocations().size() > 0)
+                {
+                    Location location = locationResult.getLocations().get(locationResult.getLocations().size() - 1);
+                    LocationUpdate(location.getLatitude(), location.getLongitude(), location.getAltitude(), location.getAccuracy(), 0.0, location.getBearing(), location.getSpeed(), location.getTime());
+                }
+                else
+                {
+                    LocationError();
+                }
+            }
+        };
+
+        /**
+         * Handle SensorEventListener events and send heading back to Unreal
+         */
+        private class PluginHeadingListener implements SensorEventListener
+        {
+            /* Gravity sensor data used to get heading */
+            private float[] gravity = new float[3];
+
+            /* Geomagnetic sensor data used to get heading */
+            private float[] geomagnetic = new float[3];
+
+            /* Geomagnetic sensor calibrated boolean */
+            private boolean calibrated;
+
+            /* Last magnetic north heading */
+            private double magneticNorth;
+
+            /* Has a heading */
+            private boolean hasHeading;
+
+            /**
+             * On Sensor Changed event
+             */
+            @Override
+            public void onSensorChanged(SensorEvent sensorEvent)
+            {
+                if (sensorEvent.sensor.getType() == Sensor.TYPE_ACCELEROMETER)
+                {
+                    gravity[0] = SmoothFloat(gravity[0], sensorEvent.values[0]);
+                    gravity[1] = SmoothFloat(gravity[1], sensorEvent.values[1]);
+                    gravity[2] = SmoothFloat(gravity[2], sensorEvent.values[2]);
+                }
+
+                if (sensorEvent.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD)
+                {
+                    geomagnetic[0] = SmoothFloat(geomagnetic[0], sensorEvent.values[0]);
+                    geomagnetic[1] = SmoothFloat(geomagnetic[1], sensorEvent.values[1]);
+                    geomagnetic[2] = SmoothFloat(geomagnetic[2], sensorEvent.values[2]);
+
+                    calibrated = sensorEvent.accuracy > 0;
+                }
+
+                float[] matrix = new float[9];
+                SensorManager.getRotationMatrix(matrix, null, gravity, geomagnetic);
+
+                float[] orientation = new float[3];
+                SensorManager.getOrientation(matrix, orientation);
+
+                magneticNorth = Math.toDegrees(orientation[0]);
+
+                HeadingUpdate(magneticNorth, calibrated);
+
+                hasHeading = true;
+
+                if (singleHeadingUpdate)
+                {
+                    singleHeadingUpdate = false;
+
+                    if (!headingListenerRunning)
+                    {
+                        HeadingUpdateStop(false);
+                    }
+                }
+            }
+
+            /**
+             * On Accuracy Changed event
+             */
+            @Override
+            public void onAccuracyChanged(Sensor sensor, int i)
+            {
+                if (sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD)
+                {
+                    calibrated = i > 0;
+
+                    if (hasHeading)
+                    {
+                        HeadingUpdate(magneticNorth, calibrated);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Unreal Plugin method to start location updates. Interval Time, Fastest Interval Time, Priority and Minimum Distance are provided as parameters.
+         */
+        public void UEPluginLocationUpdateStart(int intervalTime, int fastestIntervalTime, int priority, float minimumDistance)
+        {
+            locationListenerIntervalTime = (long) intervalTime;
+            locationListenerFastestIntervalTime = (long) fastestIntervalTime;
+            locationListenerPriority = priority;
+            locationListenerMinimumDistance = minimumDistance;
+
+            LocationUpdateStart(true);
+        }
+
+        /**
+         * Unreal Plugin method to stop location update methods
+         */
+        public void UEPluginLocationUpdateStop()
+        {
+            LocationUpdateStop(true);
+        }
+
+        /**
+         * Unreal Plugin method to request a single position update
+         */
+        public void UEPluginRequestSinglePositionUpdate()
+        {
+            RequestSinglePositionUpdate();
+        }
+
+        /**
+         * Unreal Plugin method to start heading updates.
+         */
+        public void UEPluginHeadingUpdateStart(int delay)
+        {
+            headingDelay = delay;
+
+            HeadingUpdateStart(true);
+        }
+
+        /**
+         * Unreal Plugin method to stop heading update methods
+         */
+        public void UEPluginHeadingUpdateStop()
+        {
+            HeadingUpdateStop(true);
+        }
+
+        /**
+         * Unreal Plugin method to request a single heading update
+         */
+        public void UEPluginRequestSingleHeadingUpdate()
+        {
+            RequestSingleHeadingUpdate();
+        }
+
+        /**
+         * Unreal Plugin method to get the device orientation
+         */
+        public int UEPluginGetDeviceOrientation()
+        {
+            return deviceOrientation;
+        }
+
+        /**
+         * Unreal Plugin method to get the magnetic declination
+         */
+        public float UEPluginGetMagneticDeclination(float latitude, float longitude, float altitude, long milliseconds)
+        {
+            GeomagneticField geomagneticField = new GeomagneticField(latitude, longitude, altitude, milliseconds);
+            return geomagneticField.getDeclination();
+        }
+
+        /**
+         * Start the location updates
+         */
+        public void LocationUpdateStart(final boolean UEPluginCall)
+        {
+            runOnUiThread(new Runnable()
+            {
+                public void run()
+                {
+                    try
+                    {
+                        LocationRequest locationRequest = new LocationRequest();
+                        locationRequest.setInterval(locationListenerIntervalTime);
+                        locationRequest.setFastestInterval(locationListenerFastestIntervalTime);
+                        locationRequest.setSmallestDisplacement(locationListenerMinimumDistance);
+                        locationRequest.setPriority(locationListenerPriority);
+
+                        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null);
+
+                        if (UEPluginCall)
+                        {
+                            locationListenerRunning = true;
+                        }
+                    }
+                    catch(Exception ex)
+                    {
+                        Log.debug(ex.getMessage());
+                    }
+                }
+            });
+        }
+
+        /**
+         * Stop the location updates
+         */
+        public void LocationUpdateStop(boolean UEPluginCall)
+        {
+            fusedLocationClient.removeLocationUpdates(locationCallback);
+
+            if (UEPluginCall)
+            {
+                locationListenerRunning = false;
+            }
+        }
+
+        /**
+         * Request a single location update
+         */
+        public void RequestSinglePositionUpdate()
+        {
+            fusedLocationClient.getLastLocation().addOnSuccessListener(this, new com.google.android.gms.tasks.OnSuccessListener&lt;Location&gt;()
+            {
+                @Override
+                public void onSuccess(Location location)
+                {
+                    if (location == null)
+                    {
+                        LocationError();
+                        return;
+                    }
+
+                    LocationUpdate(location.getLatitude(), location.getLongitude(), location.getAltitude(), location.getAccuracy(), 0.0, location.getBearing(), location.getSpeed(), location.getTime());
+                }
+            });
+        }
+
+        /**
+         * Start the heading updates
+         */
+        public void HeadingUpdateStart(final boolean UEPluginCall)
+        {
+            if (!headingListenerRunning)
+            {
+                runOnUiThread(new Runnable()
+                {
+                    public void run()
+                    {
+                        try
+                        {
+                            headingSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+
+                            Sensor accelerometer = headingSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+                            headingSensorManager.registerListener(headingListener, accelerometer, headingDelay);
+
+                            Sensor magnetic = headingSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+                            headingSensorManager.registerListener(headingListener, magnetic, headingDelay);
+
+                            if (UEPluginCall)
+                            {
+                                headingListenerRunning = true;
+                            }
+                        }
+                        catch(Exception ex)
+                        {
+                            Log.debug(ex.getMessage());
+                        }
+                    }
+                });
+            }
+        }
+
+        /**
+         * Stop the heading updates
+         */
+        public void HeadingUpdateStop(final boolean UEPluginCall)
+        {
+            if (headingListenerRunning)
+            {
+                runOnUiThread(new Runnable()
+                {
+                    public void run()
+                    {
+                        try
+                        {
+                            headingSensorManager.unregisterListener(headingListener);
+
+                            if (UEPluginCall)
+                            {
+                                headingListenerRunning = false;
+                            }
+                        }
+                        catch(Exception ex)
+                        {
+                            Log.debug(ex.getMessage());
+                        }
+                    }
+                });
+            }
+        }
+
+        /**
+         * Request a single heading update
+         */
+        public void RequestSingleHeadingUpdate()
+        {
+            singleHeadingUpdate = true;
+
+            HeadingUpdateStart(false);
+        }
+
+        /**
+         * Set Device Orientation
+         */
+        public void SetDeviceOrientation(int orientation)
+        {
+            deviceOrientation = orientation;
+        }
+
+        /**
+         * Smooth float
+         */
+        private float SmoothFloat(float current, float target)
+        {
+            return smoothingFactor * current + (1.0f - smoothingFactor) * target;
+        }
+      </insert>
+    </gameActivityClassAdditions>
+
+    
+    <!-- optional additions to GameActivity onCreate metadata reading in GameActivity.java
+    <gameActivityReadMetadataAdditions>
+    </gameActivityReadMetadataAdditions>
+    -->
+    
+    <!-- optional additions to GameActivity onCreate in GameActivity.java -->
+    <gameActivityOnCreateAdditions>
+        <insert>
+            locationGoogleApiClient = new GoogleApiClient.Builder(this)
+            .addApi(LocationServices.API)
+            .build();
+
+            locationGoogleApiClient.connect();
+
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+
+            orientationListener = new OrientationEventListener(getApplicationContext())
+            {
+                /**
+                 * On Orientation Changed event
+                 */
+                @Override
+                public void onOrientationChanged(int orientation)
+                {
+                    GameActivity.this.SetDeviceOrientation(orientation);
+                }
+            };
+
+            if (orientationListener.canDetectOrientation())
+            {
+                orientationListener.enable();
+            }
+        </insert>
+    </gameActivityOnCreateAdditions>
+
+
+    <!-- optional additions to GameActivity onDestroy in GameActivity.java -->
+    <gameActivityOnDestroyAdditions>
+        <insert>
+            locationGoogleApiClient.disconnect();
+        </insert>
+    </gameActivityOnDestroyAdditions>
+    
+    <!-- optional additions to GameActivity onStart in GameActivity.java
+    <gameActivityOnStartAdditions>
+    </gameActivityOnStartAdditions>
+    -->
+
+    <!-- optional additions to GameActivity onStop in GameActivity.java -->
+    <gameActivityOnStopAdditions>
+        <insert>
+            if (locationListenerRunning)
+            {
+                LocationUpdateStop(false);
+            }
+        </insert>
+    </gameActivityOnStopAdditions>
+
+    <!-- optional additions to GameActivity onPause in GameActivity.java -->
+    <gameActivityOnPauseAdditions>
+        <insert>
+            if (locationListenerRunning)
+            {
+                LocationUpdateStop(false);
+            }
+        </insert>
+    </gameActivityOnPauseAdditions>
+
+    <!-- optional additions to GameActivity onResume in GameActivity.java -->
+    <gameActivityOnResumeAdditions>
+        <insert>
+            if (locationListenerRunning)
+            {
+                LocationUpdateStart(false);
+            }
+        </insert>
+    </gameActivityOnResumeAdditions>
+
+    <!-- optional additions to GameActivity onActivityResult in GameActivity.java
+    <gameActivityOnActivityResultAdditions>
+    </gameActivityOnActivityResultAdditions>
+    -->
+
+    <!-- optional libraries to load in GameActivity.java before libUE4.so
+    <soLoadLibrary>
+    </soLoadLibrary>
+    -->
+</root>
