@@ -1,8 +1,25 @@
-# GeoLocation
+# GeoLocation plugin for UE
+
+## Status: Deprecated - See information below
+
+This open source release is intended to allow anyone with existing UE
+projects that use the plugin from the Marketplace to continue using it
+as a project plugin. This can be done by putting a copy of the plugin
+in a folder located at `Plugins/GeoLocation/` in the folder structure
+of the project by either cloning this repository to that location, or
+downloading then unarchiving the zip file found here:
+https://github.com/stevenjt/GeoLocation/archive/refs/heads/master.zip
+
+More information about plugins in projects can be found here:
+https://docs.unrealengine.com/5.0/en-US/plugins-in-unreal-engine/#pluginsinprojects
+
+By changing the `EngineVersion` value in `GeoLocation.uplugin` the
+plugin should compile in versions of UE4 from the past few years. The
+engine version is currently set to 5.0.0 and while it compiles in UE5,
+it has not been tested on any devices using that version of Unreal
+Engine.
 
 ## Description
-
-Video: https://www.youtube.com/watch?v=-sXg2YVEID0
 
 GeoLocation provides components and tools that make developing geographically
 aware features easier in Unreal Engine 4. It can be used from both Blueprint and
